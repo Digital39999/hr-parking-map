@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>Croatia Parking Zones</title>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+	<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			font-family: Arial, sans-serif;
+		}
+
+		#map {
+			position: absolute;
+			top: 0;
+			bottom: 0;
+			width: 100%;
+			background: #e8e5d8;
+		}
+
+		.city-dot {
+			width: 8px;
+			height: 8px;
+			background: #e74c3c;
+			border: 2px solid white;
+			border-radius: 50%;
+			box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+			cursor: pointer;
+		}
+
+		.leaflet-popup-content-wrapper {
+			border-radius: 8px;
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		}
+
+		.leaflet-popup-content {
+			margin: 16px;
+			min-width: 250px;
+		}
+
+		.popup-title {
+			font-size: 16px;
+			font-weight: 600;
+		}
+
+		.popup-title-border {
+			margin: 0 0 12px 0;
+			padding-bottom: 8px;
+			border-bottom: 2px solid currentColor;
+		}
+
+		.popup-section {
+			margin: 8px 0 0 0;
+		}
+
+		.popup-section-title {
+			margin: 0 0 6px 0;
+			font-weight: 600;
+			font-size: 13px;
+			color: #333;
+		}
+
+		.popup-time {
+			margin: 4px 0;
+			font-size: 13px;
+			color: #555;
+			display: flex;
+			align-items: center;
+			gap: 6px;
+		}
+
+		.popup-time::before {
+			content: "🕐";
+			font-size: 14px;
+		}
+
+		.leaflet-tile-container img {
+			background: transparent !important;
+		}
+
+		.leaflet-layer {
+			background: transparent !important;
+		}
+
+		.error-message {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			background: white;
+			padding: 30px;
+			border-radius: 8px;
+			box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+			z-index: 1000;
+			font-size: 16px;
+			text-align: center;
+			color: #e74c3c;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="map"></div>
+
+	<script>
+		const croatiaCenter = [45.1, 15.2];
+		const croatiaBounds = [
+			[42.0, 13.0],
+			[47.0, 19.8]
+		];
+
+		const map = L.map('map', {
+			maxBounds: croatiaBounds,
+			maxBoundsViscosity: 1.0,
+			zoom: 7,
+			minZoom: 7,
+			maxZoom: 14,
+			center: croatiaCenter,
+			zoomSnap: 0.25,
+			zoomDelta: 0.25
+		});
+
+		const tileLayer = L.tileLayer('https://parking.crni.xyz/tiles/{z}/{x}/{y}.png', {
+			maxZoom: 14,
+			minZoom: 7,
+			bounds: croatiaBounds,
+			keepBuffer: 2,
+			updateWhenIdle: true,
+			updateWhenZooming: false,
+			crossOrigin: true
+		}); tileLayer.addTo(map);
+
+		map.fitBounds(croatiaBounds, { padding: [20, 20] });
+
+		function generatePopupHTML(city, zone) {
+			const showWorkingHours = zone.workingHours && (zone.workingHours.workingDays || zone.workingHours.saturdayHours || zone.workingHours.sundayHours);
+
+			let popup = '<div>';
+			popup += `<h4 class="popup-title${showWorkingHours ? ' popup-title-border' : ''}" style="color: ${zone.zoneColor};">${city} - ${zone.zoneName}</h4>`;
+
+			if (showWorkingHours) {
+				popup += '<div class="popup-section">';
+				popup += '<div class="popup-section-title">Working Hours:</div>';
+
+				if (zone.workingHours.workingDays) {
+					popup += `<div class="popup-time">Monday to Friday: ${zone.workingHours.workingDays}</div>`;
+				}
+
+				if (zone.workingHours.saturdayHours) {
+					popup += `<div class="popup-time">Saturday: ${zone.workingHours.saturdayHours}</div>`;
+				}
+
+				if (zone.workingHours.sundayHours) {
+					popup += `<div class="popup-time">Sunday: ${zone.workingHours.sundayHours}</div>`;
+				}
+
+				popup += '</div>';
+			}
+
+			popup += '</div>';
+			return popup;
+		}
+
+		fetch('https://parking.crni.xyz/city-zones.json', { cache: 'force-cache' }).then((response) => response.json()).then((cities) => {
+			const totalZones = cities.reduce((sum, city) => sum + city.zones.length, 0);
+
+			for (const city of cities) {
+				const dotIcon = L.divIcon({
+					className: 'city-dot',
+					iconAnchor: [6, 6],
+					iconSize: [8, 8],
+				});
+
+				const marker = L.marker([city.center[1], city.center[0]], {
+					icon: dotIcon,
+					title: city.city
+				}).addTo(map);
+
+				marker.on('click', function () {
+					map.setView([city.center[1], city.center[0]], 14, { animate: true });
+				});
+
+				for (const zone of city.zones) {
+					const polygons = zone.coordinates.map((polygon) => polygon.map(ring => ring.map(coord => [coord[1], coord[0]])));
+					const popupHTML = generatePopupHTML(city.city, zone);
+
+					for (const polygonRings of polygons) {
+						const poly = L.polygon(polygonRings, {
+							color: zone.zoneColor,
+							fillColor: zone.zoneColor,
+							fillOpacity: 0.4,
+							weight: 2,
+							opacity: 0.8
+						}).addTo(map);
+
+						poly.bindPopup(popupHTML, {
+							maxWidth: 320,
+							className: 'custom-popup'
+						});
+
+						poly.on({
+							mouseover: function () {
+								this.setStyle({ fillOpacity: 0.7, weight: 3 });
+							},
+							mouseout: function () {
+								this.setStyle({ fillOpacity: 0.4, weight: 2 });
+							}
+						});
+					}
+				}
+			}
+
+			console.log('✔️ Loaded ' + cities.length + ' cities with ' + totalZones + ' zones.');
+		}).catch((error) => {
+			const errorDiv = document.createElement('div');
+			errorDiv.className = 'error-message';
+			errorDiv.innerHTML = '<strong>Failed to load parking zones!</strong><br><small>' + error.message + '</small>';
+			document.body.appendChild(errorDiv);
+
+			console.error('✖️ Failed to load zones:', error);
+		});
+	</script>
+</body>
+
+</html>
